@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body {margin: 0; overflow: hidden; background: black; color: white;}
+        .container {position: relative; width: 100vw; height: 100vh;}
+        canvas {position: absolute; top: 0; left: 0;}
+        .controls {
+            position: absolute; top: 20px; left: 20px;
+            background: rgba(0,0,0,0.7); padding: 15px;
+            border-radius: 8px; display: flex;
+            flex-direction: column; gap: 10px; z-index: 1000;
+        }
+        .control-group {
+            display: flex; align-items: center; gap: 10px;
+        }
+        .control-group label {width: 120px;}
+        input[type="range"] {width: 150px;}
+        button {
+            padding: 8px 16px; background: #444;
+            color: white; border: none; border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {background: #555;}
+        .value-display {width: 50px; text-align: right;}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <canvas id="canvas"></canvas>
+        <div class="controls">
+            <div class="control-group">
+                <label>引力大小</label>
+                <input type="range" id="pullSlider" min="0" max="512" value="50">
+                <span class="value-display" id="pullValue">150</span>
+            </div>
+            <div class="control-group">
+                <label>斥力大小</label>
+                <input type="range" id="pushSlider" min="0" max="512" value="25">
+                <span class="value-display" id="pushValue">150</span>
+            </div>
+            <div class="control-group">
+                <label>阻尼係數</label>
+                <input type="range" id="dampingSlider" min="0" max="100" value="80">
+                <span class="value-display" id="dampingValue">0.80</span>
+            </div>
+            <div class="control-group">
+                <label>球體大小</label>
+                <input type="range" id="radiusSlider" min="5" max="30" value="15">
+                <span class="value-display" id="radiusValue">20</span>
+            </div>
+            <button onclick="randomizePositions()">打亂位置</button>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        let PULL_FORCE = 150;    // 吸引力
+        let PUSH_FORCE = 150;    // 斥力
+        let DAMPING = 0.8;      // 阻尼
+        let BALL_RADIUS = 20;   // 球半徑
+        
+        // UI控制
+        const pullSlider = document.getElementById('pullSlider');
+        const pushSlider = document.getElementById('pushSlider');
+        const dampingSlider = document.getElementById('dampingSlider');
+        const radiusSlider = document.getElementById('radiusSlider');
+        const pullValue = document.getElementById('pullValue');
+        const pushValue = document.getElementById('pushValue');
+        const dampingValue = document.getElementById('dampingValue');
+        const radiusValue = document.getElementById('radiusValue');
+        
+        pullSlider.addEventListener('input', (e) => {
+            PULL_FORCE = parseInt(e.target.value);
+            pullValue.textContent = PULL_FORCE;
+        });
+        
+        pushSlider.addEventListener('input', (e) => {
+            PUSH_FORCE = parseInt(e.target.value);
+            pushValue.textContent = PUSH_FORCE;
+        });
+        
+        dampingSlider.addEventListener('input', (e) => {
+            DAMPING = parseInt(e.target.value) / 100;
+            dampingValue.textContent = DAMPING.toFixed(2);
+        });
+        
+        radiusSlider.addEventListener('input', (e) => {
+            BALL_RADIUS = parseInt(e.target.value);
+            radiusValue.textContent = BALL_RADIUS;
+        });
+
+        // 計算因數
+        function getFactors(n) {
+            const factors = new Set();
+            for (let i = 1; i <= Math.sqrt(n); i++) {
+                if (n % i === 0) {
+                    factors.add(i);
+                    if (i !== n/i) factors.add(n/i);
+                }
+            }
+            return Array.from(factors).sort((a, b) => a - b);
+        }
+
+        // 計算公因數
+        function getCommonFactors(a, b) {
+            const factorsA = getFactors(a);
+            const factorsB = getFactors(b);
+            return factorsA.filter(x => factorsB.includes(x));
+        }
+
+        let balls = [];
+        
+        function initBalls() {
+            balls = [];
+            for (let i = 1; i <= 300; i++) {
+                const factors = getFactors(i);
+                balls.push({
+                    number: i,
+                    x: Math.random() * (canvas.width - 2 * BALL_RADIUS) + BALL_RADIUS,
+                    y: Math.random() * (canvas.height - 2 * BALL_RADIUS) + BALL_RADIUS,
+                    vx: 0,
+                    vy: 0,
+                    isPrime: factors.length === 2,
+                    factorsCount: factors.length
+                });
+            }
+        }
+
+        function calculateForces() {
+            balls.forEach(ball => {
+                ball.vx *= DAMPING;
+                ball.vy *= DAMPING;
+            });
+
+            for (let i = 0; i < balls.length; i++) {
+                for (let j = i + 1; j < balls.length; j++) {
+                    const dx = balls[j].x - balls[i].x;
+                    const dy = balls[j].y - balls[i].y;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+                    
+                    if (distance < 1) continue;
+                    
+                    const nx = dx / distance;
+                    const ny = dy / distance;
+                    
+                    const commonFactors = getCommonFactors(balls[i].number, balls[j].number);
+                    
+                    let force;
+                    if (commonFactors.length > 1) {
+                        // 有公因數時吸引，公因數越多吸引力越大
+                        force = -PULL_FORCE * Math.log2(commonFactors.length) / (distance * distance);
+                    } else {
+                        // 互質時排斥
+                        force = PUSH_FORCE / (distance * distance);
+                    }
+                    
+                    // 防止重疊
+                    if (distance < BALL_RADIUS * 2) {
+                        force = PUSH_FORCE / (distance * distance);
+                    }
+                    
+                    const fx = force * nx;
+                    const fy = force * ny;
+                    
+                    balls[i].vx -= fx;
+                    balls[i].vy -= fy;
+                    balls[j].vx += fx;
+                    balls[j].vy += fy;
+                }
+            }
+        }
+
+        function updatePositions() {
+            balls.forEach(ball => {
+                ball.x += ball.vx;
+                ball.y += ball.vy;
+                
+                if (ball.x < BALL_RADIUS) {
+                    ball.x = BALL_RADIUS;
+                    ball.vx = Math.abs(ball.vx) * DAMPING;
+                }
+                if (ball.x > canvas.width - BALL_RADIUS) {
+                    ball.x = canvas.width - BALL_RADIUS;
+                    ball.vx = -Math.abs(ball.vx) * DAMPING;
+                }
+                if (ball.y < BALL_RADIUS) {
+                    ball.y = BALL_RADIUS;
+                    ball.vy = Math.abs(ball.vy) * DAMPING;
+                }
+                if (ball.y > canvas.height - BALL_RADIUS) {
+                    ball.y = canvas.height - BALL_RADIUS;
+                    ball.vy = -Math.abs(ball.vy) * DAMPING;
+                }
+            });
+        }
+
+        function draw() {
+            ctx.fillStyle = 'black';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            balls.forEach(ball => {
+                ctx.beginPath();
+                ctx.arc(ball.x, ball.y, BALL_RADIUS, 0, Math.PI * 2);
+                
+                if (ball.isPrime) {
+                    ctx.fillStyle = '#808080';  // 質數用灰色
+                } else {
+                    const hue = (ball.number * 3.6) % 360;
+                    const saturation = Math.min(100, 50 + (ball.factorsCount * 5));
+                    const lightness = 50;
+                    ctx.fillStyle = `hsl(${hue}, ${saturation}%, ${lightness}%)`;
+                }
+                
+                ctx.fill();
+                ctx.strokeStyle = '#333';
+                ctx.stroke();
+                
+                ctx.fillStyle = '#fff';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.font = `${BALL_RADIUS * 0.8}px Arial`;
+                ctx.fillText(ball.number, ball.x, ball.y);
+            });
+        }
+
+        function animate() {
+            calculateForces();
+            updatePositions();
+            draw();
+            requestAnimationFrame(animate);
+        }
+
+        function randomizePositions() {
+            balls.forEach(ball => {
+                ball.x = Math.random() * (canvas.width - 2 * BALL_RADIUS) + BALL_RADIUS;
+                ball.y = Math.random() * (canvas.height - 2 * BALL_RADIUS) + BALL_RADIUS;
+                ball.vx = 0;
+                ball.vy = 0;
+            });
+        }
+
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            if (balls.length === 0) {
+                initBalls();
+            }
+        }
+        
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+        animate();
+    </script>
+</body>
+</html>
